@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 import json
 import shutil
 import subprocess
-
-
+import webbrowser
+from urllib.parse import urlparse
 load_dotenv()
 
 API_KEY = os.getenv("GROQ_API_KEY")
@@ -37,7 +37,14 @@ def load_folders():
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
     return {k.lower(): v for k, v in data.items()}
-
+WEBSITE_FILE = Path(__file__).with_name('websites.json')
+def load_websites():
+    try:
+        with open(WEBSITE_FILE,encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError,json.JSONDecodeError):
+        return {}
+    return {k.lower(): v for k,v in data.items()}
 
 def scan_apps():
 
@@ -61,7 +68,7 @@ def scan_apps():
 
 apps = scan_apps()
 folders = load_folders()
-
+web_url = load_websites()
 
 
 def listen():
@@ -104,7 +111,10 @@ def speak(text):
         last_spoken_at = time.monotonic()
     except Exception as e:
         print(f"Speech output problem: {e}")
+
         
+    
+            
 def filter_user(text):
     fillers = {"please", "open", "can", "you", "hey", "launch", "start", "run", "bro", "satel", "jarvis", "the"}
     return [word for word in text.lower().split() if word not in fillers]
@@ -130,6 +140,32 @@ def open_folder(nickname, folders):
         print(f"Could not open '{nickname}' in VS Code: {error}")
         speak(f"Could not open {nickname} in VS Code")
     
+def open_url(url, nickname=None):
+    url = url.strip().rstrip(".,!?;:")
+    if not urlparse(url).scheme:
+        url = f"https://{url}"
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not host
+        or any(char.isspace() for char in url)
+        or ("." not in host and host != "localhost")
+    ):
+        print(f"Invalid website URL: {url}")
+        speak("That website address is invalid")
+        return
+
+    if webbrowser.open(url, new=2):
+        label = nickname or host
+        print(f"Opening {label}: {url}")
+        speak(f"Opening {label}")
+    else:
+        print(f"Could not open website: {url}")
+        speak("I couldn't open that website")
+            
+
+
 def find_app(text):
     query = " ".join(filter_user(text))
     if not query:
@@ -148,6 +184,7 @@ def understand_app(user_input):
         "Identify which application the user wants to open. Choose only from this list: "
         f"{names}\nReturn exactly the selected app name, or none if no app fits.\n"
         f"User request: {user_input}"
+        # f"If the user asks about a webstie return url:{web_url}"
     )
     try:
         response = requests.post(
@@ -216,6 +253,31 @@ def handle_command(command):
     folder_query = " ".join(filter_user(command))
     words = command.lower().split()
     said_open = any(w in OPEN_WORDS for w in words)
+
+    website_name = None
+    if folder_query in web_url:
+        website_name = folder_query
+    if website_name:
+        open_url(web_url[website_name], website_name)
+        return
+
+    if said_open and folder_query:
+        candidate = folder_query.replace(" dot ", ".").replace(" slash ", "/")
+        parsed_candidate = urlparse(candidate if "://" in candidate else f"https://{candidate}")
+        if parsed_candidate.hostname and "." in parsed_candidate.hostname:
+            open_url(candidate)
+            return
+
+    if said_open:
+        website_match = difflib.get_close_matches(
+            folder_query, web_url.keys(), n=1, cutoff=0.55
+        )
+        if website_match:
+            website_name = website_match[0]
+    if website_name:
+        open_url(web_url[website_name], website_name)
+        return
+
     nickname = None
     if folder_query in folders:
         nickname = folder_query
