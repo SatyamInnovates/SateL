@@ -11,10 +11,10 @@ import requests
 import speech_recognition as sr
 import win32com.client
 from dotenv import load_dotenv
-import time
 import pyautogui
-
-
+import psutil
+from pycaw.pycaw import AudioUtilities
+import threading
 load_dotenv()
 
 API_KEY = os.getenv("GROQ_API_KEY")
@@ -122,19 +122,17 @@ def take_screenshots():
     except Exception as e:
         print(f'some error occured while saving: {e}')
         speak(f'some error occured while saving: {e}')
+        return
     print(f'Screenshot saved: {path}')
     speak('Screenshot saved')
     
-
-def filter_user(text):
-    fillers = {"please", "open", "can", "you", "hey", "launch", "start",
-               "run", "bro", "satel", "jarvis", "the"}
-    return [word for word in text.lower().split() if word not in fillers]
-
-
-def closest(query, names, cutoff=0.6):
-    match = difflib.get_close_matches(query, names, n=1, cutoff=cutoff)
-    return match[0] if match else None
+def get_battery():
+    battery = psutil.sensors_battery()
+    if battery is None:
+        print("i can't check battery")
+        speak("Can't check that, some error occured")
+        return None
+    return battery.percent
 
 
 def open_folder(nickname, folders):
@@ -157,6 +155,155 @@ def open_folder(nickname, folders):
     except OSError as error:
         print(f"Could not open '{nickname}' in VS Code: {error}")
         speak(f"Could not open {nickname} in VS Code")
+
+
+
+devices = AudioUtilities.GetSpeakers()
+volume_controller = devices.EndpointVolume
+
+class VolumeControls:
+    @staticmethod
+    def volume_up():
+        current = volume_controller.GetMasterVolumeLevelScalar()
+        new_volume = min(1.0, current + 0.05)
+        volume_controller.SetMasterVolumeLevelScalar(new_volume, None)
+        print(f"Volume set to: {round(new_volume * 100)}%")
+        speak("done")
+    
+    @staticmethod
+    def volume_down():
+        current = volume_controller.GetMasterVolumeLevelScalar()
+        new_volume = max(0.0, current - 0.05)
+        volume_controller.SetMasterVolumeLevelScalar(new_volume, None)
+        print(f"Volume set to: {round(new_volume * 100)}%")
+        speak("done")
+        
+    @staticmethod
+    def mute():
+        current_mute = volume_controller.GetMute()
+        new_mute = not current_mute
+        volume_controller.SetMute(new_mute, None)
+        print("Muted" if new_mute else "Unmuted")
+        speak("Muted" if new_mute else "Unmuted")
+    
+    @staticmethod
+    def set_volume(level):
+        if not 0 <= level <= 100:
+            print("Enter a volume between 0 and 100.")
+            return
+
+        volume_controller.SetMasterVolumeLevelScalar(level / 100, None)
+        print(f"Volume set to {level}%")
+        speak("done")
+
+    @staticmethod
+    def get_volume():
+        current = volume_controller.GetMasterVolumeLevelScalar()
+        muted = volume_controller.GetMute()
+        print(f"Current volume: {round(current * 100)}%" + (" (muted)" if muted else ""))
+        speak(f"Volume is {round(current * 100)} percent" + (", muted" if muted else ""))
+    
+    
+    
+class FocusMode:
+    def __init__(self, duration=45, focus_volume=25):
+        self.active = False
+        self.original_volume = None
+        self.focus_volume = focus_volume
+        self.duration = duration
+        self.timer = None 
+        self.deadline = None
+        self.lock = threading.RLock()
+        
+        
+        
+        
+    def start(self):
+        with self.lock:
+            if self.active:
+                speak("Focus mode is already on")
+                return
+            
+            self.original_volume = volume_controller.GetMasterVolumeLevelScalar()
+            self.original_mute = bool(volume_controller.GetMute())
+            self.active = True
+            self.deadline = time.monotonic() + self.duration * 60
+            try:
+                volume_controller.SetMasterVolumeLevelScalar(self.focus_volume / 100 ,None)
+                volume_controller.SetMute(False,None)
+                
+                open_folder('current project', folders)
+                
+                webbrowser.open("https://open.spotify.com", new=2)
+                self.timer = threading.Timer(self.duration * 60, self.timer_finished)
+                self.timer.daemon = True 
+                self.timer.start()
+            except Exception as e:
+                print(f'Focus mode erro: {e}')
+                speak(f"Foucs mode error:{e}")
+                self.restore_audio()
+                self.active = False
+                self.deadline = None
+                speak("can't start")
+                return
+            
+            
+            
+        speak(f'focus mode started for {self.duration} minutes')
+        
+    def restore_audio(self):
+        if self.original_volume is not None: 
+            volume_controller.SetMasterVolumeLevelScalar(self.original_volume, None)
+        if self.original_mute is not None: 
+            volume_controller.SetMute( self.original_mute, None ) 
+            
+    def timer_finished(self):
+        with self.lock:
+            if not self.active:
+                return
+            
+            self.active = False
+            self.deadline = None
+            self.timer = None
+            self.restore_audio()
+        print("Focus timer finished.")
+        
+    def stop(self):
+        with self.lock:
+            if not self.active:
+                speak('focus mdoe is not active')
+                return
+            
+            self.active = False
+            
+            if self.timer is not None: 
+                self.timer.cancel() 
+                self.timer = None 
+                self.deadline = None 
+                self.restore_audio() 
+                
+    def remaining_time(self):
+        with self.lock:
+            if not self.active or self.deadline is None:
+                return None
+            return max(0,int(self.deadline - time.monotonic()))
+            
+         
+               
+                
+focus = FocusMode()
+
+        
+def filter_user(text):
+    fillers = {"please", "open", "can", "you", "hey", "launch", "start",
+               "run", "bro", "satel", "jarvis", "the"}
+    return [word for word in text.lower().split() if word not in fillers]
+
+
+def closest(query, names, cutoff=0.6):
+    match = difflib.get_close_matches(query, names, n=1, cutoff=cutoff)
+    return match[0] if match else None
+
 
 
 def open_url(url, nickname=None):
@@ -261,6 +408,47 @@ def is_app_command(text):
 def handle_command(command):
     query = " ".join(filter_user(command))
     said_open = any(w in OPEN_WORDS for w in command.lower().split())
+    command = command.lower().strip()
+    if "start focus mode" in command:
+        focus.start()
+        return
+    if "end focus mode" in command or "stop focus mode" in command:
+        focus.stop()
+        return
+    
+    if "time remaining" in command or "how much time left" in command:
+        seconds = focus.remaining_time()
+        
+        if seconds is None:
+            speak("Focus mode is not active.")
+        else:
+            minutes, seconds = divmod(seconds, 60)
+            speak(f"{minutes} minutes and {seconds} seconds remaining.")
+
+        return
+    
+    words = command.lower().split()
+    if any(word in {"volume", "mute", "unmute", "louder", "quieter"} for word in words):
+        if "unmute" in words:
+            volume_controller.SetMute(False, None)
+            speak("Unmuted")
+        elif "mute" in words:
+            volume_controller.SetMute(True, None)
+            speak("Muted")
+        elif "up" in words or "increase" in words or "louder" in words:
+            VolumeControls.volume_up()
+        elif "down" in words or "decrease" in words or "quieter" in words:
+            VolumeControls.volume_down()
+        elif "set" in words:
+            level = next((int(word.rstrip("%")) for word in words if word.rstrip("%").isdigit()), None)
+            if level is None:
+                speak("Tell me a volume from 0 to 100 percent")
+            else:
+                VolumeControls.set_volume(level)
+        else:
+            VolumeControls.get_volume()
+        return
+
     if query in web_url:
         open_url(web_url[query], query)
         return
@@ -268,6 +456,13 @@ def handle_command(command):
         take_screenshots()
         return
     
+    if "battery" in command.lower():
+        battery = get_battery()
+        if battery is not None:
+            print(f"Battery: {battery}%")
+            speak(f"Battery is at {battery} percent")
+        return
+        
     if said_open and query:
         address = query.replace(" dot ", ".").replace(" slash ", "/")
         host = urlparse(address if "://" in address else f"https://{address}").hostname
@@ -354,3 +549,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
