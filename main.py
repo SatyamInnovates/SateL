@@ -1,22 +1,27 @@
 import difflib
+import json
 import os
+import shutil
+import subprocess
 import time
+import webbrowser
 from pathlib import Path
+from urllib.parse import urlparse
 import requests
 import speech_recognition as sr
 import win32com.client
 from dotenv import load_dotenv
-import json
-import shutil
-import subprocess
-import webbrowser
-from urllib.parse import urlparse
+import time
+import pyautogui
+
+
 load_dotenv()
 
 API_KEY = os.getenv("GROQ_API_KEY")
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "openai/gpt-oss-20b"
 SYSTEM_PROMPT = "You are Jarvis, a friendly voice assistant. Give concise, helpful answers."
+OPEN_WORDS = {"open", "launch", "start", "run"}
 
 recognizer = sr.Recognizer()
 recognizer.dynamic_energy_threshold = True
@@ -27,48 +32,55 @@ speaker.Volume = 100
 speaker.Rate = 0
 last_spoken_at = 0.0
 
-
 FOLDERS_FILE = Path(__file__).with_name("folders.json")
+WEBSITE_FILE = Path(__file__).with_name("websites.json")
 
-def load_folders():
+
+def load_nicknames(path):
     try:
-        with open(FOLDERS_FILE, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
     return {k.lower(): v for k, v in data.items()}
-WEBSITE_FILE = Path(__file__).with_name('websites.json')
-def load_websites():
-    try:
-        with open(WEBSITE_FILE,encoding="utf-8") as f:
-            data = json.load(f)
-    except (FileNotFoundError,json.JSONDecodeError):
-        return {}
-    return {k.lower(): v for k,v in data.items()}
+
 
 def scan_apps():
-
-    folders = [
+    start_menus = [
         Path(os.environ.get("PROGRAMDATA", "C:/ProgramData"))
         / "Microsoft/Windows/Start Menu/Programs",
         Path(os.environ.get("APPDATA", str(Path.home() / "AppData/Roaming")))
         / "Microsoft/Windows/Start Menu/Programs",
     ]
     found = {}
-    for folder in folders:
-        if not folder.exists():
+    for menu in start_menus:
+        if not menu.exists():
             continue
         try:
-            for shortcut in folder.rglob("*.lnk"):
-                found[shortcut.stem.lower()] = str(shortcut)
+            for shortcut in menu.rglob("*.lnk"):
+                name = shortcut.stem.lower()
+                if "uninstall" in name:
+                    continue
+                found[name] = str(shortcut)
         except OSError as error:
-            print(f"Couldn't scan {folder}: {error}")
+            print(f"Couldn't scan {menu}: {error}")
     return found
 
 
 apps = scan_apps()
-folders = load_folders()
-web_url = load_websites()
+folders = load_nicknames(FOLDERS_FILE)
+web_url = load_nicknames(WEBSITE_FILE)
+
+
+def speak(text):
+    global last_spoken_at
+    try:
+        if not text:
+            return
+        speaker.Speak(str(text))
+        last_spoken_at = time.monotonic()
+    except Exception as e:
+        print(f"Speech output problem: {e}")
 
 
 def listen():
@@ -100,24 +112,30 @@ def listen():
             print(f"Microphone problem: {error}")
             speak(f"Microphone problem: {error}")
             return ""
-    return ""
 
-def speak(text):
-    global last_spoken_at
+def take_screenshots():
+    folder = Path.home() / "Pictures" / "Screenshots"
     try:
-        if not text:
-            return
-        speaker.Speak(str(text))
-        last_spoken_at = time.monotonic()
+        folder.mkdir(parents=True,exist_ok=True)
+        path = folder / (time.strftime("SateL_%Y%m%d_%H%M%S") + ".png")
+        pyautogui.screenshot().save(path)
     except Exception as e:
-        print(f"Speech output problem: {e}")
-
-        
+        print(f'some error occured while saving: {e}')
+        speak(f'some error occured while saving: {e}')
+    print(f'Screenshot saved: {path}')
+    speak('Screenshot saved')
     
-            
+
 def filter_user(text):
-    fillers = {"please", "open", "can", "you", "hey", "launch", "start", "run", "bro", "satel", "jarvis", "the"}
+    fillers = {"please", "open", "can", "you", "hey", "launch", "start",
+               "run", "bro", "satel", "jarvis", "the"}
     return [word for word in text.lower().split() if word not in fillers]
+
+
+def closest(query, names, cutoff=0.6):
+    match = difflib.get_close_matches(query, names, n=1, cutoff=cutoff)
+    return match[0] if match else None
+
 
 def open_folder(nickname, folders):
     path = folders.get(nickname)
@@ -139,7 +157,8 @@ def open_folder(nickname, folders):
     except OSError as error:
         print(f"Could not open '{nickname}' in VS Code: {error}")
         speak(f"Could not open {nickname} in VS Code")
-    
+
+
 def open_url(url, nickname=None):
     url = url.strip().rstrip(".,!?;:")
     if not urlparse(url).scheme:
@@ -163,7 +182,6 @@ def open_url(url, nickname=None):
     else:
         print(f"Could not open website: {url}")
         speak("I couldn't open that website")
-            
 
 
 def find_app(text):
@@ -172,8 +190,7 @@ def find_app(text):
         return None
     if query in apps:
         return query
-    match = difflib.get_close_matches(query, apps.keys(), n=1, cutoff=0.68)
-    return match[0] if match else None
+    return closest(query, apps.keys(), cutoff=0.68)
 
 
 def understand_app(user_input):
@@ -184,7 +201,6 @@ def understand_app(user_input):
         "Identify which application the user wants to open. Choose only from this list: "
         f"{names}\nReturn exactly the selected app name, or none if no app fits.\n"
         f"User request: {user_input}"
-        # f"If the user asks about a webstie return url:{web_url}"
     )
     try:
         response = requests.post(
@@ -204,10 +220,7 @@ def understand_app(user_input):
         response.raise_for_status()
         result = response.json()["choices"][0]["message"]["content"].strip().lower()
         result = result.strip(" \t\r\n\"'`.,:;!?*-")
-      
-        if result in apps:
-            return result
-        return next((name for name in apps if name in result), None)
+        return result if result in apps else None
     except (requests.RequestException, KeyError, IndexError, ValueError) as error:
         print(f"App matching problem: {error}")
         return None
@@ -235,66 +248,49 @@ def ask_ai(user_input):
         return response.json()["choices"][0]["message"]["content"].strip()
     except (requests.RequestException, KeyError, IndexError, ValueError) as error:
         print(f"AI service problem: {error}")
-        return "Can't Reach my ai services. Please try again."
-
-
-OPEN_WORDS = {"open", "launch", "start", "run"}
+        return "Can't reach my AI services. Please try again."
 
 
 def is_app_command(text):
     words = text.lower().split()
     while words and words[0] in {"please", "can", "you", "hey", "jarvis"}:
         words.pop(0)
-
     return bool(words and words[0] in OPEN_WORDS) or text.lower().strip() in apps
 
 
 def handle_command(command):
-    folder_query = " ".join(filter_user(command))
-    words = command.lower().split()
-    said_open = any(w in OPEN_WORDS for w in words)
-
-    website_name = None
-    if folder_query in web_url:
-        website_name = folder_query
-    if website_name:
-        open_url(web_url[website_name], website_name)
+    query = " ".join(filter_user(command))
+    said_open = any(w in OPEN_WORDS for w in command.lower().split())
+    if query in web_url:
+        open_url(web_url[query], query)
         return
-
-    if said_open and folder_query:
-        candidate = folder_query.replace(" dot ", ".").replace(" slash ", "/")
-        parsed_candidate = urlparse(candidate if "://" in candidate else f"https://{candidate}")
-        if parsed_candidate.hostname and "." in parsed_candidate.hostname:
-            open_url(candidate)
+    if "screenshot" in command.lower():
+        take_screenshots()
+        return
+    
+    if said_open and query:
+        address = query.replace(" dot ", ".").replace(" slash ", "/")
+        host = urlparse(address if "://" in address else f"https://{address}").hostname
+        if host and "." in host:
+            open_url(address)
             return
 
-    if said_open:
-        website_match = difflib.get_close_matches(
-            folder_query, web_url.keys(), n=1, cutoff=0.55
-        )
-        if website_match:
-            website_name = website_match[0]
-    if website_name:
-        open_url(web_url[website_name], website_name)
-        return
 
-    nickname = None
-    if folder_query in folders:
-        nickname = folder_query
-    elif said_open:
-        folder_match = difflib.get_close_matches(folder_query, folders.keys(), n=1, cutoff=0.55)
-        if folder_match:
-            nickname = folder_match[0]
+    if said_open:
+        site = closest(query, web_url.keys())
+        if site:
+            open_url(web_url[site], site)
+            return
+
+    nickname = query if query in folders else None
+    if nickname is None and said_open:
+        nickname = closest(query, folders.keys())
     if nickname:
-        open_folder(nickname,folders)
+        open_folder(nickname, folders)
         return
-        
-        
 
     if is_app_command(command):
-        name = find_app(command)
-        if not name:
-            name = understand_app(command)
+        name = find_app(command) or understand_app(command)
         if name:
             try:
                 os.startfile(apps[name])
@@ -310,7 +306,6 @@ def handle_command(command):
     answer = ask_ai(command)
     speak(answer)
     print(f"Jarvis: {answer}")
-    
 
 
 def main():
@@ -341,8 +336,8 @@ def main():
                 continue
             active = True
             print("Assistant activated!")
-            speak('Yo what do i do?')
-            command = " ".join(word for word in words if word not in {"hello", "jarvis", "satel"}).strip()
+            speak("Yo what do I do?")
+            command = " ".join(w for w in words if w not in {"hello", "jarvis", "satel"}).strip()
             if not command:
                 continue
         else:
@@ -351,7 +346,7 @@ def main():
         if command in {"sleep", "go to sleep", "stop listening"}:
             active = False
             print("Assistant is sleeping.")
-            speak("by")
+            speak("bye")
             continue
 
         handle_command(command)

@@ -1,0 +1,7 @@
+requests
+SpeechRecognition
+PyAudio
+pywin32
+python-dotenv
+pillow
+pyautogui
