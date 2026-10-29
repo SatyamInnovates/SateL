@@ -15,14 +15,24 @@ import pyautogui
 import psutil
 from pycaw.pycaw import AudioUtilities
 import threading
+from datetime import datetime
+# import winsound
+# from google.cloud import texttospeech
+import asyncio,uuid,tempfile
+import edge_tts
+import pygame
+
 load_dotenv()
 
+# SERVICE_ACCOUNT_PATH = Path(__file__).with_name("ttsprojecttest1-26be1c6f3488.json")
+# tts_client = None
 API_KEY = os.getenv("GROQ_API_KEY")
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "openai/gpt-oss-20b"
 SYSTEM_PROMPT = "You are Jarvis, a friendly voice assistant. Give concise, helpful answers."
 OPEN_WORDS = {"open", "launch", "start", "run"}
-
+VOICE = "en-US-RogerNeural"
+pygame.mixer.init()
 recognizer = sr.Recognizer()
 recognizer.dynamic_energy_threshold = True
 recognizer.pause_threshold = 0.8
@@ -34,8 +44,52 @@ last_spoken_at = 0.0
 
 FOLDERS_FILE = Path(__file__).with_name("folders.json")
 WEBSITE_FILE = Path(__file__).with_name("websites.json")
+CONVERSATION_FILE = Path(__file__).with_name("conversations") / "conversation.txt"
+MAX_HISTORY_MESSAGES = 12  
 
 
+def load_conversation():
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    try:
+        contents = CONVERSATION_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return messages
+    
+
+    for block in contents.split("=" * 60):
+        
+        lines = block.strip().splitlines()
+        question = next((line[len("Question : "):] for line in lines
+                         if line.startswith("Question : ")), None)
+        answer_index = next((i for i, line in enumerate(lines)
+                             if line.startswith("Answer: ")), None)
+        if question is None or answer_index is None:
+            continue
+        answer_lines = [lines[answer_index][len("Answer: "):]]
+        answer_lines.extend(lines[answer_index + 1:])
+        answer = "\n".join(answer_lines).strip()
+        if question.strip() and answer:
+            messages.extend([
+                {"role": "user", "content": question.strip()},
+                {"role": "assistant", "content": answer},
+            ])
+
+    return [messages[0], *messages[-MAX_HISTORY_MESSAGES:]]
+
+
+conversation_history = load_conversation()
+
+
+def save_conversation(question,answer):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    CONVERSATION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with CONVERSATION_FILE.open('a', encoding='utf-8') as f:
+        f.write(f"\n{'='*60}\n")
+        f.write(f"Timestamp: {timestamp}\n")
+        f.write(f"Question : {question}\n")
+        f.write(f"Answer: {answer}\n")
+        f.write(f"{'='*60}\n")
+    
 def load_nicknames(path):
     try:
         with open(path, encoding="utf-8") as f:
@@ -71,16 +125,44 @@ apps = scan_apps()
 folders = load_nicknames(FOLDERS_FILE)
 web_url = load_nicknames(WEBSITE_FILE)
 
-
+async def _make_audio(text, path):
+    await edge_tts.Communicate(text, VOICE,rate="-5%",pitch="-7Hz").save(path)
+    
+    
+    
 def speak(text):
     global last_spoken_at
+    path = os.path.join(tempfile.gettempdir(), f"satel_{uuid.uuid4().hex}.mp3")
+    if not text:
+        return
+    edge_spoken = False
+    fallback_spoken = False
     try:
-        if not text:
-            return
-        speaker.Speak(str(text))
+        asyncio.run(_make_audio(text,path))
+        pygame.mixer.music.load(path)
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():
+            pygame.time.Clock().tick(10)
+        edge_spoken = True
+        pygame.mixer.music.unload()
         last_spoken_at = time.monotonic()
-    except Exception as e:
-        print(f"Speech output problem: {e}")
+    except Exception as error:
+        print(f"TTS PROBLEM  using Windows voice: {error}")
+        if not edge_spoken:
+            speaker.Speak(text)
+            fallback_spoken = True
+            last_spoken_at = time.monotonic()
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass 
+        if not edge_spoken and not fallback_spoken:
+            try:
+                speaker.Speak(str(text))
+                last_spoken_at = time.monotonic()
+            except Exception as fallback_error:
+                print(f"Speech output problem: {fallback_error}")
 
 
 def listen():
@@ -93,7 +175,9 @@ def listen():
         try:
             with sr.Microphone() as source:
                 print("Listening...")
+                recognizer.adjust_for_ambient_noise(source, duration=0.5)
                 audio = recognizer.listen(source, timeout=8, phrase_time_limit=10)
+                
             text = recognizer.recognize_google(audio, language="en-IN").lower().strip()
             print(f"You said: {text}")
             return text
@@ -289,6 +373,7 @@ class FocusMode:
             return max(0,int(self.deadline - time.monotonic()))
             
          
+          
                
                 
 focus = FocusMode()
@@ -382,17 +467,22 @@ def ask_ai(user_input):
             headers={"Authorization": f"Bearer {API_KEY}"},
             json={
                 "model": MODEL,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_input},
-                ],
+                "messages": [*conversation_history,
+                             {"role": "user", "content": user_input}],
                 "temperature": 0.7,
                 "max_tokens": 250,
             },
             timeout=20,
         )
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
+        answer = response.json()["choices"][0]["message"]["content"].strip()
+    
+        conversation_history.extend([
+            {'role':'user','content':user_input},
+            {'role':'assistant',"content":answer}
+        ])
+        del conversation_history[1:-MAX_HISTORY_MESSAGES]
+        return answer
     except (requests.RequestException, KeyError, IndexError, ValueError) as error:
         print(f"AI service problem: {error}")
         return "Can't reach my AI services. Please try again."
@@ -499,6 +589,8 @@ def handle_command(command):
         return
 
     answer = ask_ai(command)
+    if answer != "Can't reach my AI services. Please try again." and not answer.startswith("API KEY"):
+        save_conversation(command, answer)
     speak(answer)
     print(f"Jarvis: {answer}")
 
@@ -549,4 +641,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

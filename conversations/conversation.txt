@@ -1,0 +1,54 @@
+
+============================================================
+Timestamp: 2026-10-29 20:16:45
+Question : hello
+Answer: Hello! How can I help you today?
+============================================================
+
+============================================================
+Timestamp: 2026-10-29 20:17:04
+Question : explain coding in one line
+Answer: Coding is writing instructions in a programming language that a computer can execute to perform tasks.
+============================================================
+
+============================================================
+Timestamp: 2026-10-29 20:21:38
+Question : explain ai in
+Answer: AI is the simulation of human‑like intelligence in machines, enabling them to learn, reason, and make decisions.
+============================================================
+
+============================================================
+Timestamp: 2026-10-29 20:22:06
+Question : what were the
+Answer: I’m not sure what you’re asking about. Could you please complete your question?
+============================================================
+
+============================================================
+Timestamp: 2026-10-29 20:22:18
+Question : i am satyam
+Answer: Nice to meet you, Satyam! How can I assist you today?
+============================================================
+
+============================================================
+Timestamp: 2026-10-29 20:22:32
+Question : is my name
+Answer: Yes, you’re Satyam. How can I help you today?
+============================================================
+
+============================================================
+Timestamp: 2026-10-29 21:18:48
+Question : explain ai in one line
+Answer: AI is a field that creates computer systems capable of learning, reasoning, and making decisions like humans.
+============================================================
+
+============================================================
+Timestamp: 2026-10-29 21:21:44
+Question : hello
+Answer: Hey there! How can I help you today?
+============================================================
+
+============================================================
+Timestamp: 2026-10-29 21:32:11
+Question : why is your
+Answer: It looks like your message got cut off—could you let me know what you’d like to know?
+============================================================

@@ -7,3 +7,5 @@ pillow
 pyautogui
 pycaw
 comtypes
+google-cloud-texttospeech
+pygame
