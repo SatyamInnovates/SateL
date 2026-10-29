@@ -9,3 +9,5 @@ pycaw
 comtypes
 google-cloud-texttospeech
 pygame
+opencv-python
+edge-tts

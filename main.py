@@ -16,19 +16,25 @@ import psutil
 from pycaw.pycaw import AudioUtilities
 import threading
 from datetime import datetime
+import base64
 # import winsound
 # from google.cloud import texttospeech
 import asyncio,uuid,tempfile
 import edge_tts
 import pygame
+import cv2
+from PIL import Image
+
 
 load_dotenv()
 
 # SERVICE_ACCOUNT_PATH = Path(__file__).with_name("ttsprojecttest1-26be1c6f3488.json")
 # tts_client = None
+
 API_KEY = os.getenv("GROQ_API_KEY")
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "openai/gpt-oss-20b"
+VISION_MODEL = "qwen/qwen3.8-27b"
 SYSTEM_PROMPT = "You are Jarvis, a friendly voice assistant. Give concise, helpful answers."
 OPEN_WORDS = {"open", "launch", "start", "run"}
 VOICE = "en-US-RogerNeural"
@@ -47,6 +53,8 @@ WEBSITE_FILE = Path(__file__).with_name("websites.json")
 CONVERSATION_FILE = Path(__file__).with_name("conversations") / "conversation.txt"
 MAX_HISTORY_MESSAGES = 12  
 
+# The webcam is opened only when a vision command is requested.
+cap = None
 
 def load_conversation():
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -196,7 +204,75 @@ def listen():
             print(f"Microphone problem: {error}")
             speak(f"Microphone problem: {error}")
             return ""
+        
+        
+        
+def vision(question):
+    camera = cv2.VideoCapture(0)
+    
+    try:
+        if not camera.isOpened():
+            return "I can't see a camera"
 
+        frame = None
+        for _ in range(3):
+            ret, current_frame = camera.read()
+            if ret:
+                frame = current_frame
+        if frame is None:
+            return "I couldn't capture an image from the camera."
+    finally:
+        camera.release()
+
+    encoded, image_buffer = cv2.imencode(
+        ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85]
+    )
+    
+    if not encoded:
+        return "I couldn't prepare the camera image."
+    image_base64 = base64.b64encode(image_buffer.tobytes()).decode("ascii")
+
+    if not API_KEY:
+        return "The Groq API key isn't configured."
+
+    try:
+        payload = {
+            "model": VISION_MODEL,
+            "messages": [
+                
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Jarvis. Answer questions about the camera image "
+                        "concisely. Describe only what is visible and say when unsure."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": question},{"type": "image_url","image_url": {
+                        "url": f"data:image/jpeg;base64,{image_base64}"},},],},
+                ],
+            "temperature": 0.4,
+            "max_completion_tokens": 400,
+        }
+        response = requests.post(
+            API_URL,
+            headers={
+                "Authorization": f"Bearer {API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=60,
+        )
+        response.raise_for_status()
+        answer = response.json()["choices"][0]["message"]["content"]
+        return answer.strip() if answer else "I couldn't understand the image response."
+    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as error:
+        print(f"Groq vision problem: {error}")
+        return "I couldn't analyze the camera image. Check the connection and Groq model access."
+   
+    
 def take_screenshots():
     folder = Path.home() / "Pictures" / "Screenshots"
     try:
@@ -372,8 +448,7 @@ class FocusMode:
                 return None
             return max(0,int(self.deadline - time.monotonic()))
             
-         
-          
+        
                
                 
 focus = FocusMode()
@@ -499,6 +574,23 @@ def handle_command(command):
     query = " ".join(filter_user(command))
     said_open = any(w in OPEN_WORDS for w in command.lower().split())
     command = command.lower().strip()
+    vision_phrases = (
+        "what do you see",
+        "what can you see",
+        "describe what you see",
+        "look at this",
+        "what is in front of me",
+        "what's in front of me",
+        "analyze camera",
+        "what's near me",
+    )
+    if any(phrase in command for phrase in vision_phrases):
+        answer = vision(command)
+        print(f"Jarvis: {answer}")
+        speak(answer)
+        return
+
+
     if "start focus mode" in command:
         focus.start()
         return
