@@ -467,8 +467,9 @@ class FocusMode:
                 volume_controller.SetMute(False,None)
                 
                 open_folder('current project', folders)
-                
+                speak("Let's chill and code .opening spotify")
                 webbrowser.open("https://open.spotify.com", new=2)
+                
                 self.timer = threading.Timer(self.duration * 60, self.timer_finished)
                 self.timer.daemon = True 
                 self.timer.start()
@@ -522,9 +523,7 @@ class FocusMode:
                 return None
             return max(0,int(self.deadline - time.monotonic()))
             
-        
-               
-                
+    
 focus = FocusMode()
 
         
@@ -562,7 +561,7 @@ def open_url(url, nickname=None):
         speak(f"Opening {label}")
     else:
         print(f"Could not open website: {url}")
-        speak("I couldn't open that website")
+        speak("Can't open that web sorry")
 
 
 def find_app(text):
@@ -658,6 +657,7 @@ def handle_command(command):
         "analyze camera",
         "what's near me",
     )
+    
     if any(phrase in command for phrase in vision_phrases):
         answer = vision(command)
         print(f"Jarvis: {answer}")
@@ -766,8 +766,8 @@ def handle_command(command):
             except OSError as error:
                 print(f"Could not open {name}: {error}")
         else:
-            print("I couldn't find that app in the Start Menu.")
-            speak("I couldn't find that app in the Start Menu.")
+            print("can't find any app bro")
+            speak("can't find exact app in Start menu")
         return
 
     answer = ask_ai(command)
@@ -777,15 +777,20 @@ def handle_command(command):
     print(f"Jarvis: {answer}")
 
 
+
+
+
 def main():
     active = False
     last_presence_check = 0.0
     face_arrival_announced = False
+    
     try:
         with sr.Microphone() as source:
             print("Calibrating microphone. Please stay quiet for a moment...")
             recognizer.adjust_for_ambient_noise(source, duration=1)
             print(f"Microphone ready (sensitivity threshold: {recognizer.energy_threshold:.0f}).")
+            
     except (OSError, AttributeError) as error:
         print(f"Microphone setup problem: {error}")
         speak(f"Microphone setup problem: {error}")
@@ -822,7 +827,7 @@ def main():
                 continue
             active = True
             print("Assistant activated!")
-            speak("Yo what do I do?")
+            speak("Yea! What's up bro?")
             command = " ".join(w for w in words if w not in {"hello", "jarvis", "satel"}).strip()
             if not command:
                 continue
