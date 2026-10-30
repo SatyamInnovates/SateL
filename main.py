@@ -8,6 +8,16 @@ import time
 import webbrowser
 from pathlib import Path
 from urllib.parse import urlparse
+from app_paths import (
+    APP_DIR,
+    CONVERSATION_FILE,
+    FACE_DETECTOR_MODEL,
+    FACE_EMBEDDING_FILE,
+    FACE_RECOGNIZER_MODEL,
+    FOLDERS_FILE,
+    REMINDERS_FILE,
+    WEBSITE_FILE,
+)
 import requests
 import speech_recognition as sr
 import win32com.client
@@ -28,7 +38,7 @@ import cv2
 import numpy as np
 
 
-load_dotenv()
+load_dotenv(APP_DIR / ".env")
 
 
 API_KEY = os.getenv("GROQ_API_KEY")
@@ -48,19 +58,12 @@ recognizer.non_speaking_duration = 0.5
 speaker = None
 last_spoken_at = 0.0
 ui_events = queue.Queue()
+text_commands = queue.Queue()
 assistant_running = threading.Event()
 
-FOLDERS_FILE = Path(__file__).with_name("folders.json")
-WEBSITE_FILE = Path(__file__).with_name("websites.json")
-FACE_EMBEDDING_FILE = Path(__file__).with_name("data") / "face.npy"
-FACE_DETECTOR_MODEL = Path(__file__).with_name("models") / "face_detection_yunet_2023mar.onnx"
-FACE_RECOGNIZER_MODEL = Path(__file__).with_name("models") / "face_recognition_sface_2021dec.onnx"
 FACE_MATCH_THRESHOLD = 0.363
 FACE_PRESENCE_INTERVAL = 60
-CONVERSATION_FILE = Path(__file__).with_name("conversations") / "conversation.txt"
-REMINDERS_FILE = Path(__file__).with_name("reminders.json")
 MAX_HISTORY_MESSAGES = 12  
-MAX_HISTORY_MESSAGES = 12
 
 reminders = []
 pending_reminder = None
@@ -96,8 +99,14 @@ def check_due_reminders():
     due = [item for item in reminders if item["due"] <= now]
     if not due:
         return
+    previous_reminders = reminders.copy()
     reminders[:] = [item for item in reminders if item["due"] > now]
-    save_reminders()
+    try:
+        save_reminders()
+    except OSError as error:
+        reminders[:] = previous_reminders
+        print(f"Could not update reminders file: {error}")
+        return
     ui_events.put(("reminders", reminders.copy()))
     for item in due:
         message = f"Reminder: {item['text']}"
@@ -206,11 +215,19 @@ def parse_reminder_delay(command):
 
 def save_reminder_at(due_timestamp, reminder_text):
     reminders.append({"text": reminder_text, "due": due_timestamp})
-    save_reminders()
+    try:
+        save_reminders()
+    except OSError as error:
+        reminders.pop()
+        print(f"Could not save reminder: {error}")
+        speak("I couldn't save that reminder.")
+        return False
     ui_events.put(("reminders", reminders.copy()))
     response = f"Okay, I'll remind you to {reminder_text}."
     print(f"Jarvis: {response}")
     speak(response)
+    return True
+
 
 
 def create_reminder(amount, unit_seconds, reminder_text):
@@ -229,7 +246,7 @@ def load_conversation():
         contents = CONVERSATION_FILE.read_text(encoding="utf-8")
     except FileNotFoundError:
         return messages
-    
+
 
     for block in contents.split("=" * 60):
         
@@ -306,7 +323,7 @@ web_url = load_nicknames(WEBSITE_FILE)
 
 async def _make_audio(text, path):
     await edge_tts.Communicate(text, VOICE,rate="-5%",pitch="-7Hz").save(path)
-    
+
     
     
 def speak(text):
@@ -314,6 +331,7 @@ def speak(text):
     path = os.path.join(tempfile.gettempdir(), f"satel_{uuid.uuid4().hex}.mp3")
     if not text:
         return
+    ui_events.put(("assistant_message", str(text)))
     edge_spoken = False
     fallback_spoken = False
     try:
@@ -615,8 +633,8 @@ class FocusMode:
         with self.lock:
             if self.active:
                 speak("Focus mode is already on")
-                return
-            
+                return True
+
             self.original_volume = volume_controller.GetMasterVolumeLevelScalar()
             self.original_mute = bool(volume_controller.GetMute())
             self.active = True
@@ -639,11 +657,12 @@ class FocusMode:
                 self.active = False
                 self.deadline = None
                 speak("can't start")
-                return
+                return False
             
             
             
         speak(f'focus mode started for {self.duration} minutes')
+        return True
         
     def restore_audio(self):
         if self.original_volume is not None: 
@@ -660,6 +679,7 @@ class FocusMode:
             self.deadline = None
             self.timer = None
             self.restore_audio()
+        ui_events.put(("focus", False))
         print("Focus timer finished.")
         
     def stop(self):
@@ -887,8 +907,8 @@ def handle_command(command):
 
 
     if "start focus mode" in command:
-        focus.start()
-        ui_events.put(("focus", True))
+        started = focus.start()
+        ui_events.put(("focus", started))
         return
     if "end focus mode" in command or "stop focus mode" in command:
         focus.stop()
@@ -985,12 +1005,24 @@ def handle_command(command):
 
 
 
+def process_text_command(command):
+    command = command.strip()
+    if not command:
+        return True
+    if command.lower() in {"exit", "quit", "shutdown"}:
+        print("Shutting down assistant.")
+        speak("Shutting down")
+        return False
+    handle_command(command)
+    return True
+
 
 
 def main():
     active = False
     last_presence_check = 0.0
     face_arrival_announced = False
+    voice_available = True
     
     try:
         with sr.Microphone() as source:
@@ -1000,8 +1032,11 @@ def main():
             
     except (OSError, AttributeError) as error:
         print(f"Microphone setup problem: {error}")
+        ui_events.put(("input_status", "Microphone unavailable; text mode is ready"))
+
+
         speak(f"Microphone setup problem: {error}")
-        return
+        voice_available = False
     print(f"Found {len(apps)} Start Menu apps. Say 'hello' to activate, 'sleep' to pause, or 'exit' to quit.")
     while assistant_running.is_set():
         check_due_reminders()
@@ -1021,9 +1056,29 @@ def main():
                 ui_events.put(("face_status", "Unavailable"))
                 print(f"Presence check skipped: {message}")
 
+
+
+        try:
+            typed_command = text_commands.get_nowait()
+        except queue.Empty:
+            typed_command = None
+        if typed_command is None and not voice_available:
+            try:
+                typed_command = text_commands.get(timeout=0.25)
+            except queue.Empty:
+                continue
+        if typed_command is not None:
+            if not process_text_command(typed_command):
+                break
+            continue
+        if not voice_available:
+            continue
+
+
         user = listen()
         if not user:
             continue
+        ui_events.put(("user_message", user))
 
         words = user.split()
         if user in {"exit", "quit", "shutdown"}:
@@ -1070,8 +1125,9 @@ def start_app():
     from welcome import WelcomeWindow
 
     root = tk.Tk()
-    window = WelcomeWindow(root)
+    window = WelcomeWindow(root, on_command=text_commands.put)
     window.set_reminders(reminders)
+    window.set_input_status("Voice and text commands ready")
     assistant_running.set()
 
     def process_ui_events():
@@ -1087,6 +1143,12 @@ def start_app():
                     window.set_focus_status(value)
                 elif event == "reminders":
                     window.set_reminders(value)
+                elif event == "user_message":
+                    window.add_message("You", value)
+                elif event == "assistant_message":
+                    window.add_message("SateL", value)
+                elif event == "input_status":
+                    window.set_input_status(value)
                 elif event == "assistant_stopped":
                     window.set_face_status("Assistant stopped")
         except queue.Empty:

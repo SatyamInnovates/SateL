@@ -5,3 +5,7 @@ __pycache__/
 venv/
 
 ttsprojecttest1-26be1c6f3488.json
+
+
+reminders.json
+data/face.npy

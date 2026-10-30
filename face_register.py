@@ -1,17 +1,10 @@
-from pathlib import Path
-
 import cv2
 import numpy as np
-
-
-ROOT = Path(__file__).resolve().parent
-DETECTOR_MODEL = ROOT / "models" / "face_detection_yunet_2023mar.onnx"
-RECOGNIZER_MODEL = ROOT / "models" / "face_recognition_sface_2021dec.onnx"
-EMBEDDING_FILE = ROOT / "data" / "face.npy"
+from app_paths import FACE_DETECTOR_MODEL, FACE_EMBEDDING_FILE, FACE_RECOGNIZER_MODEL
 
 
 def main():
-    if not DETECTOR_MODEL.is_file() or not RECOGNIZER_MODEL.is_file():
+    if not FACE_DETECTOR_MODEL.is_file() or not FACE_RECOGNIZER_MODEL.is_file():
         raise FileNotFoundError("Face detection/recognition model file is missing.")
 
     camera = cv2.VideoCapture(0)
@@ -32,9 +25,9 @@ def main():
 
     height, width = frame.shape[:2]
     detector = cv2.FaceDetectorYN.create(
-        str(DETECTOR_MODEL), "", (width, height), score_threshold=0.5
+        str(FACE_DETECTOR_MODEL), "", (width, height), score_threshold=0.5
     )
-    recognizer = cv2.FaceRecognizerSF.create(str(RECOGNIZER_MODEL), "")
+    recognizer = cv2.FaceRecognizerSF.create(str(FACE_RECOGNIZER_MODEL), "")
     _, faces = detector.detect(frame)
     if faces is None or len(faces) == 0:
         raise RuntimeError("No face detected. Try again facing the camera.")
@@ -46,9 +39,9 @@ def main():
     if feature.size == 0 or not np.isfinite(feature).all():
         raise RuntimeError("Could not create a valid face embedding.")
 
-    EMBEDDING_FILE.parent.mkdir(parents=True, exist_ok=True)
-    np.save(EMBEDDING_FILE, feature)
-    print(f"Face embedding saved to {EMBEDDING_FILE}")
+    FACE_EMBEDDING_FILE.parent.mkdir(parents=True, exist_ok=True)
+    np.save(FACE_EMBEDDING_FILE, feature)
+    print(f"Face embedding saved to {FACE_EMBEDDING_FILE}")
 
 
 if __name__ == "__main__":
