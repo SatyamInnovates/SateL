@@ -1,12 +1,15 @@
 import cv2
 import numpy as np
+from pathlib import  Path
 
 
-DETECTOR_MODEL = "face_detection_yunet_2023mar.onnx"
-RECOGNIZER_MODEL = "face_recognition_sface_2021dec.onnx"
+ROOT = Path(__file__).resolve().parent
+DETECTOR_MODEL = ROOT / "models" / "face_detection_yunet_2023mar.onnx"
+RECOGNIZER_MODEL = ROOT / "models" / "face_recognition_sface_2021dec.onnx"
+EMBEDDING_FILE = ROOT / "data" / "face.npy"
 
 
-saved_face = np.load('satyam.npy')
+saved_face = np.load(EMBEDDING_FILE, allow_pickle=False)
 
 cam = cv2.VideoCapture(0)
 

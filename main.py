@@ -1,6 +1,7 @@
 import difflib
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -18,23 +19,17 @@ import threading
 import queue
 import tkinter as tk
 import pythoncom
-from datetime import datetime
+from datetime import datetime, timedelta
 import base64
-# import winsound
-# from google.cloud import texttospeech
 import asyncio,uuid,tempfile
 import edge_tts
 import pygame
 import cv2
 import numpy as np
-from PIL import Image
-
 
 
 load_dotenv()
 
-# SERVICE_ACCOUNT_PATH = Path(__file__).with_name("ttsprojecttest1-26be1c6f3488.json")
-# tts_client = None
 
 API_KEY = os.getenv("GROQ_API_KEY")
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -43,6 +38,8 @@ VISION_MODEL = "qwen/qwen3.8-27b"
 SYSTEM_PROMPT = "You are Jarvis, a friendly voice assistant. Give concise, helpful answers."
 OPEN_WORDS = {"open", "launch", "start", "run"}
 VOICE = "en-US-RogerNeural"
+
+
 pygame.mixer.init()
 recognizer = sr.Recognizer()
 recognizer.dynamic_energy_threshold = True
@@ -61,7 +58,167 @@ FACE_RECOGNIZER_MODEL = Path(__file__).with_name("models") / "face_recognition_s
 FACE_MATCH_THRESHOLD = 0.363
 FACE_PRESENCE_INTERVAL = 60
 CONVERSATION_FILE = Path(__file__).with_name("conversations") / "conversation.txt"
+REMINDERS_FILE = Path(__file__).with_name("reminders.json")
 MAX_HISTORY_MESSAGES = 12  
+MAX_HISTORY_MESSAGES = 12
+
+reminders = []
+pending_reminder = None
+
+
+
+def load_reminders():
+    try:
+        data = json.loads(REMINDERS_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [
+        item for item in data
+        if isinstance(item, dict)
+        and isinstance(item.get("text"), str)
+        and isinstance(item.get("due"), (int, float))
+    ]
+
+
+def save_reminders():
+    REMINDERS_FILE.write_text(
+        json.dumps(reminders, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+
+def check_due_reminders():
+    now = time.time()
+
+    due = [item for item in reminders if item["due"] <= now]
+    if not due:
+        return
+    reminders[:] = [item for item in reminders if item["due"] > now]
+    save_reminders()
+    ui_events.put(("reminders", reminders.copy()))
+    for item in due:
+        message = f"Reminder: {item['text']}"
+        print(f"Jarvis: {message}")
+        speak(message)
+
+
+REMINDER_NUMBER_PATTERN = (
+    r"(?:\d+|a|an|zero|one|two|three|four|five|six|seven|eight|nine|ten|"
+    r"eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|"
+    r"nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|"
+    r"(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety) "
+    r"(?:one|two|three|four|five|six|seven|eight|nine))"
+)
+REMINDER_UNIT_PATTERN = r"(?:seconds?|secs?|minutes?|mins?|hours?|hrs?)"
+
+# parser
+def parse_spoken_number(value):
+    value = value.strip().lower()
+    if value.isdigit():
+        return int(value)
+
+    ones = {
+        "a": 1, "an": 1, "zero": 0, "one": 1, "two": 2, "three": 3,
+        "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+        "nine": 9, "ten": 10, "eleven": 11, "twelve": 12,
+        "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+        "seventeen": 17, "eighteen": 18, "nineteen": 19,
+    }
+    tens = {
+        "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+        "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+    }
+    parts = value.split()
+    if len(parts) == 1:
+        return ones.get(parts[0], tens.get(parts[0]))
+    if len(parts) == 2 and parts[0] in tens and parts[1] in ones:
+        return tens[parts[0]] + ones[parts[1]]
+    return None
+
+
+
+def parse_reminder_command(command):
+    command = re.sub(r"[.!?,]+$", "", command.lower().strip())
+    command = re.sub(
+        r"^(?:(?:hey\s+)?(?:jarvis|satel)[, ]+|please\s+|can you\s+|could you\s+|would you\s+)+",
+        "",
+        command,
+    )
+    number = rf"(?P<number>{REMINDER_NUMBER_PATTERN})"
+    unit = rf"(?P<unit>{REMINDER_UNIT_PATTERN})"
+    task = r"(?P<text>.+)"
+    patterns = (
+        rf"remind me in {number} {unit} (?:to )?{task}",
+        rf"remind me to {task} in {number} {unit}",
+        rf"remind me to {task} after {number} {unit}",
+        rf"(?:set )?(?:a )?reminder (?:me )?(?:in|for) {number} {unit} to {task}",
+        rf"(?:set )?(?:a )?reminder (?:me )?(?:to|for) {task} (?:in|after) {number} {unit}",
+    )
+    for pattern in patterns:
+        match = re.fullmatch(pattern, command)
+        if not match:
+            continue
+        amount = parse_spoken_number(match.group("number"))
+        text = match.group("text").strip(" .,!?")
+        raw_unit = match.group("unit")
+        if amount is None or amount <= 0 or not text:
+            return None
+        if raw_unit.startswith(("sec",)):
+            multiplier = 1
+        elif raw_unit.startswith(("min",)):
+            multiplier = 60
+        else:
+            multiplier = 3600
+        return amount, multiplier, text
+    return None
+
+
+def parse_reminder_delay(command):
+    command = re.sub(r"[.!?,]+$", "", command.lower().strip())
+    command = re.sub(
+        r"^(?:(?:hey\s+)?(?:jarvis|satel)[, ]+|please\s+|can you\s+|could you\s+|would you\s+)+",
+        "",
+        command,
+    )
+    number = rf"(?P<number>{REMINDER_NUMBER_PATTERN})"
+    unit = rf"(?P<unit>{REMINDER_UNIT_PATTERN})"
+    patterns = (
+        rf"remind me in {number} {unit}",
+        rf"(?:set )?(?:a )?reminder (?:me )?(?:in|for) {number} {unit}",
+    )
+    for pattern in patterns:
+        match = re.fullmatch(pattern, command)
+        if not match:
+            continue
+        amount = parse_spoken_number(match.group("number"))
+        raw_unit = match.group("unit")
+        if amount is None or amount <= 0:
+            return None
+        multiplier = 1 if raw_unit.startswith("sec") else (
+            60 if raw_unit.startswith("min") else 3600
+        )
+        return amount, multiplier
+    return None
+
+
+def save_reminder_at(due_timestamp, reminder_text):
+    reminders.append({"text": reminder_text, "due": due_timestamp})
+    save_reminders()
+    ui_events.put(("reminders", reminders.copy()))
+    response = f"Okay, I'll remind you to {reminder_text}."
+    print(f"Jarvis: {response}")
+    speak(response)
+
+
+def create_reminder(amount, unit_seconds, reminder_text):
+    due_at = datetime.now() + timedelta(seconds=amount * unit_seconds)
+    save_reminder_at(due_at.timestamp(), reminder_text)
+
+reminders = load_reminders()
+
 
 
 cap = None
@@ -98,7 +255,6 @@ def load_conversation():
 conversation_history = load_conversation()
 
 
-
 def save_conversation(question,answer):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     CONVERSATION_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -108,7 +264,10 @@ def save_conversation(question,answer):
         f.write(f"Question : {question}\n")
         f.write(f"Answer: {answer}\n")
         f.write(f"{'='*60}\n")
-
+        
+        
+        
+        
 
 def load_nicknames(path):
     try:
@@ -644,9 +803,57 @@ def is_app_command(text):
 
 
 def handle_command(command):
+    global pending_reminder
     query = " ".join(filter_user(command))
     said_open = any(w in OPEN_WORDS for w in command.lower().split())
     command = command.lower().strip()
+
+    if pending_reminder and command in {"cancel", "never mind", "nevermind"}:
+        pending_reminder = None
+        speak("Okay, I cancelled that reminder.")
+        return
+
+    parsed_reminder = parse_reminder_command(command)
+    if parsed_reminder:
+        amount, unit_seconds, reminder_text = parsed_reminder
+        pending_reminder = None
+        create_reminder(amount, unit_seconds, reminder_text)
+        return
+
+    reminder_delay = parse_reminder_delay(command)
+    if reminder_delay:
+        amount, unit_seconds = reminder_delay
+        due_timestamp = time.time() + amount * unit_seconds
+        pending_reminder = (due_timestamp, time.monotonic() + 30)
+        speak("What should I remind you about?")
+        return
+
+    if pending_reminder:
+        due_timestamp, expires_at = pending_reminder
+        if time.monotonic() <= expires_at and command:
+            pending_reminder = None
+            reminder_text = command.strip(" .,!?")
+            if reminder_text.startswith("to "):
+                reminder_text = reminder_text[3:]
+            save_reminder_at(due_timestamp, reminder_text)
+            return
+        pending_reminder = None
+
+    if "remind me" in command or "set reminder" in command:
+        speak("Say, remind me in 5 minutes, then tell me what to remind you about.")
+        return
+
+    if command in {"list reminders", "what are my reminders", "show reminders"}:
+        if not reminders:
+            speak("You don't have any pending reminders.")
+        else:
+            descriptions = [
+                f"{item['text']} at {datetime.fromtimestamp(item['due']).strftime('%I:%M %p')}"
+                for item in reminders
+            ]
+            speak("Your reminders are: " + ". ".join(descriptions))
+        return
+
     vision_phrases = (
         "what do you see",
         "what can you see",
@@ -797,6 +1004,8 @@ def main():
         return
     print(f"Found {len(apps)} Start Menu apps. Say 'hello' to activate, 'sleep' to pause, or 'exit' to quit.")
     while assistant_running.is_set():
+        check_due_reminders()
+
         now = time.monotonic()
         if now - last_presence_check >= FACE_PRESENCE_INTERVAL:
             last_presence_check = now
@@ -862,6 +1071,7 @@ def start_app():
 
     root = tk.Tk()
     window = WelcomeWindow(root)
+    window.set_reminders(reminders)
     assistant_running.set()
 
     def process_ui_events():
@@ -875,6 +1085,8 @@ def start_app():
                     window.set_face_status(value)
                 elif event == "focus":
                     window.set_focus_status(value)
+                elif event == "reminders":
+                    window.set_reminders(value)
                 elif event == "assistant_stopped":
                     window.set_face_status("Assistant stopped")
         except queue.Empty:

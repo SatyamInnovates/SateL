@@ -6,7 +6,7 @@ class WelcomeWindow:
     def __init__(self,root):
         self.root = root
         self.root.title('SateL')
-        self.root.geometry("600x400")
+        self.root.geometry("600x520")
         self.root.configure(bg="#121212"
                             )
         self.title_label = tk.Label(
@@ -24,7 +24,7 @@ class WelcomeWindow:
             fg="#70d6ff",
             bg="#121212",
         )
-        
+
         self.greeting_label.pack(pady=10)
 
         self.time_label = tk.Label(
@@ -42,7 +42,7 @@ class WelcomeWindow:
             bg="#121212",
         )
         self.face_status_label.pack(pady=10)
-        
+
         self.focus_status_label = tk.Label(
             root,
             text="Focus mode: Off",
@@ -51,13 +51,36 @@ class WelcomeWindow:
             bg="#121212",
         )
         self.focus_status_label.pack(pady=10)
+
+        self.reminders_title = tk.Label(
+
+            root,
+            text="Upcoming reminders",
+            font=("Segoe UI", 12, "bold"),
+            fg="white",
+            bg="#121212",
+        )
+        self.reminders_title.pack(pady=(12, 4))
+        self.reminders_list = tk.Listbox(
+            root,
+            height=5,
+            width=58,
+            bg="#202020",
+            fg="white",
+            selectbackground="#70d6ff",
+            relief="flat",
+        )
+
+        self.reminders_list.pack(padx=20, pady=(0, 12))
         self.update_clock()
+
+
 
     def update_clock(self):
         current_time = datetime.now().strftime("%A, %B %d  •  %I:%M:%S %p")
         self.time_label.config(text=current_time)
         self.root.after(1000,self.update_clock)
-        
+
     def set_greeting(self, message):
         self.greeting_label.config(text=message)
 
@@ -66,9 +89,14 @@ class WelcomeWindow:
                                       )
     def set_focus_status(self, is_active):
         status = "On" if is_active else "Off"
-        self.focus_status_label.config(text=f"Focus mode: {status}")    
-        
+        self.focus_status_label.config(text=f"Focus mode: {status}")
+    def set_reminders(self,items):
+        self.reminders_list.delete(0,tk.END)
+        for item in items:
+            due_time = datetime.fromtimestamp(item["due"]).strftime("%I:%M %p")
+            self.reminders_list.insert(tk.END, f"{item['text']} - {due_time}")
+
 if __name__ == "__main__":
     root = tk.Tk()
     app = WelcomeWindow(root)
-    root.mainloop()        
+    root.mainloop()

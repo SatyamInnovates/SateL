@@ -11,3 +11,5 @@ google-cloud-texttospeech
 pygame
 opencv-python
 edge-tts
+psutil
+numpy
