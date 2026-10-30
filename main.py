@@ -284,16 +284,16 @@ def vision(question):
 
 
 def check_registered_face():
-    """Return (match status, message); None means the check could not run."""
     if not FACE_EMBEDDING_FILE.is_file():
-        return None, "No face is registered yet. Run face_register.py first."
+        
+        return None, "No face is registered yet. Run face_register.py first"
     if not FACE_DETECTOR_MODEL.is_file() or not FACE_RECOGNIZER_MODEL.is_file():
         return None, "The face recognition model files are missing."
 
     camera = cv2.VideoCapture(0)
     try:
         if not camera.isOpened():
-            return None, "I can't access the camera for face verification."
+            return None, "I can't access the camera for face verification light up your room."
 
         frame = None
         for _ in range(5):
@@ -336,6 +336,7 @@ def check_registered_face():
     except (cv2.error, OSError, ValueError) as error:
         print(f"Face verification problem: {error}")
         return None, "Face verification failed. Check the saved face data and model files."
+
 
 
 def verify_face():
