@@ -15,6 +15,9 @@ import pyautogui
 import psutil
 from pycaw.pycaw import AudioUtilities
 import threading
+import queue
+import tkinter as tk
+import pythoncom
 from datetime import datetime
 import base64
 # import winsound
@@ -45,10 +48,10 @@ recognizer = sr.Recognizer()
 recognizer.dynamic_energy_threshold = True
 recognizer.pause_threshold = 0.8
 recognizer.non_speaking_duration = 0.5
-speaker = win32com.client.Dispatch("SAPI.SpVoice")
-speaker.Volume = 100
-speaker.Rate = 0
+speaker = None
 last_spoken_at = 0.0
+ui_events = queue.Queue()
+assistant_running = threading.Event()
 
 FOLDERS_FILE = Path(__file__).with_name("folders.json")
 WEBSITE_FILE = Path(__file__).with_name("websites.json")
@@ -57,7 +60,6 @@ FACE_DETECTOR_MODEL = Path(__file__).with_name("models") / "face_detection_yunet
 FACE_RECOGNIZER_MODEL = Path(__file__).with_name("models") / "face_recognition_sface_2021dec.onnx"
 FACE_MATCH_THRESHOLD = 0.363
 FACE_PRESENCE_INTERVAL = 60
-face_is_present = False
 CONVERSATION_FILE = Path(__file__).with_name("conversations") / "conversation.txt"
 MAX_HISTORY_MESSAGES = 12  
 
@@ -663,10 +665,14 @@ def handle_command(command):
         return
 
     if command in {"verify face", "verify my face", "check my face", "recognize me"}:
-        global face_is_present
         match, answer = check_registered_face()
-        if match is not None:
-            face_is_present = match
+        if match is True:
+            ui_events.put(("arrival", answer))
+        elif match is False:
+            ui_events.put(("face_status", "Not recognized"))
+        else:
+            ui_events.put(("face_status", "Unavailable"))
+
         print(f"Jarvis: {answer}")
         speak(answer)
         return
@@ -675,9 +681,11 @@ def handle_command(command):
 
     if "start focus mode" in command:
         focus.start()
+        ui_events.put(("focus", True))
         return
     if "end focus mode" in command or "stop focus mode" in command:
         focus.stop()
+        ui_events.put(("focus", False))
         return
     
     if "time remaining" in command or "how much time left" in command:
@@ -770,9 +778,9 @@ def handle_command(command):
 
 
 def main():
-    global face_is_present
     active = False
     last_presence_check = 0.0
+    face_arrival_announced = False
     try:
         with sr.Microphone() as source:
             print("Calibrating microphone. Please stay quiet for a moment...")
@@ -783,18 +791,20 @@ def main():
         speak(f"Microphone setup problem: {error}")
         return
     print(f"Found {len(apps)} Start Menu apps. Say 'hello' to activate, 'sleep' to pause, or 'exit' to quit.")
-    while True:
+    while assistant_running.is_set():
         now = time.monotonic()
         if now - last_presence_check >= FACE_PRESENCE_INTERVAL:
             last_presence_check = now
             match, message = check_registered_face()
-            if match is True and not face_is_present:
-                face_is_present = True
+            if match is True and not face_arrival_announced:
+                face_arrival_announced = True
+                ui_events.put(("arrival", message))
                 print(f"Jarvis: {message}")
                 speak(message)
             elif match is False:
-                face_is_present = False
+                ui_events.put(("face_status", "Not detected"))
             elif match is None:
+                ui_events.put(("face_status", "Unavailable"))
                 print(f"Presence check skipped: {message}")
 
         user = listen()
@@ -828,7 +838,56 @@ def main():
         handle_command(command)
 
 
-if __name__ == "__main__":
-    main()
+def assistant_worker():
+    global speaker
+    pythoncom.CoInitialize()
+    try:
+        speaker = win32com.client.Dispatch("SAPI.SpVoice")
+        speaker.Volume = 100
+        speaker.Rate = 0
+        main()
+    finally:
+        assistant_running.clear()
+        ui_events.put(("assistant_stopped", None))
+        pythoncom.CoUninitialize()
 
+
+def start_app():
+    from welcome import WelcomeWindow
+
+    root = tk.Tk()
+    window = WelcomeWindow(root)
+    assistant_running.set()
+
+    def process_ui_events():
+        try:
+            while True:
+                event, value = ui_events.get_nowait()
+                if event == "arrival":
+                    window.set_face_status("Recognized")
+                    window.set_greeting(value)
+                elif event == "face_status":
+                    window.set_face_status(value)
+                elif event == "focus":
+                    window.set_focus_status(value)
+                elif event == "assistant_stopped":
+                    window.set_face_status("Assistant stopped")
+        except queue.Empty:
+            pass
+
+        if root.winfo_exists():
+            root.after(100, process_ui_events)
+
+    def close_window():
+        assistant_running.clear()
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", close_window)
+    threading.Thread(target=assistant_worker, daemon=True).start()
+    root.after(100, process_ui_events)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    start_app()
 
