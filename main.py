@@ -23,7 +23,9 @@ import asyncio,uuid,tempfile
 import edge_tts
 import pygame
 import cv2
+import numpy as np
 from PIL import Image
+
 
 
 load_dotenv()
@@ -50,10 +52,16 @@ last_spoken_at = 0.0
 
 FOLDERS_FILE = Path(__file__).with_name("folders.json")
 WEBSITE_FILE = Path(__file__).with_name("websites.json")
+FACE_EMBEDDING_FILE = Path(__file__).with_name("data") / "face.npy"
+FACE_DETECTOR_MODEL = Path(__file__).with_name("models") / "face_detection_yunet_2023mar.onnx"
+FACE_RECOGNIZER_MODEL = Path(__file__).with_name("models") / "face_recognition_sface_2021dec.onnx"
+FACE_MATCH_THRESHOLD = 0.363
+FACE_PRESENCE_INTERVAL = 60
+face_is_present = False
 CONVERSATION_FILE = Path(__file__).with_name("conversations") / "conversation.txt"
 MAX_HISTORY_MESSAGES = 12  
 
-# The webcam is opened only when a vision command is requested.
+
 cap = None
 
 def load_conversation():
@@ -88,6 +96,7 @@ def load_conversation():
 conversation_history = load_conversation()
 
 
+
 def save_conversation(question,answer):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     CONVERSATION_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -97,7 +106,8 @@ def save_conversation(question,answer):
         f.write(f"Question : {question}\n")
         f.write(f"Answer: {answer}\n")
         f.write(f"{'='*60}\n")
-    
+
+
 def load_nicknames(path):
     try:
         with open(path, encoding="utf-8") as f:
@@ -271,6 +281,67 @@ def vision(question):
     except (requests.RequestException, KeyError, IndexError, TypeError, ValueError) as error:
         print(f"Groq vision problem: {error}")
         return "I couldn't analyze the camera image. Check the connection and Groq model access."
+
+
+def check_registered_face():
+    """Return (match status, message); None means the check could not run."""
+    if not FACE_EMBEDDING_FILE.is_file():
+        return None, "No face is registered yet. Run face_register.py first."
+    if not FACE_DETECTOR_MODEL.is_file() or not FACE_RECOGNIZER_MODEL.is_file():
+        return None, "The face recognition model files are missing."
+
+    camera = cv2.VideoCapture(0)
+    try:
+        if not camera.isOpened():
+            return None, "I can't access the camera for face verification."
+
+        frame = None
+        for _ in range(5):
+            ok, current_frame = camera.read()
+            if ok and current_frame is not None:
+                frame = current_frame
+        if frame is None:
+            return None, "I couldn't capture an image for face verification."
+    finally:
+        camera.release()
+
+    try:
+        saved_feature = np.load(FACE_EMBEDDING_FILE, allow_pickle=False)
+        if saved_feature.size == 0 or not np.isfinite(saved_feature).all():
+            return None, "The saved face data is invalid. Register your face again."
+
+        h, w = frame.shape[:2]
+        detector = cv2.FaceDetectorYN.create(
+            str(FACE_DETECTOR_MODEL), "", (w, h), score_threshold=0.5
+        )
+        recognizer = cv2.FaceRecognizerSF.create(str(FACE_RECOGNIZER_MODEL), "")
+        detector.setInputSize((w, h))
+        _, faces = detector.detect(frame)
+        if faces is None or len(faces) == 0:
+            return False, "I couldn't find a face. Please try again facing the camera."
+        if len(faces) > 1:
+            return False, "I see more than one face. Please have only one person in view."
+
+        aligned = recognizer.alignCrop(frame, faces[0])
+        current_feature = recognizer.feature(aligned)
+        score = float(recognizer.match(
+            saved_feature,
+            current_feature,
+            cv2.FaceRecognizerSF_FR_COSINE,
+        ))
+        print(f"Face similarity: {score:.3f}")
+        if score >= FACE_MATCH_THRESHOLD:
+            return True, "User has arrived."
+        return False, "I couldn't verify that face."
+    except (cv2.error, OSError, ValueError) as error:
+        print(f"Face verification problem: {error}")
+        return None, "Face verification failed. Check the saved face data and model files."
+
+
+def verify_face():
+    _, message = check_registered_face()
+    return message
+   
    
     
 def take_screenshots():
@@ -590,6 +661,16 @@ def handle_command(command):
         speak(answer)
         return
 
+    if command in {"verify face", "verify my face", "check my face", "recognize me"}:
+        global face_is_present
+        match, answer = check_registered_face()
+        if match is not None:
+            face_is_present = match
+        print(f"Jarvis: {answer}")
+        speak(answer)
+        return
+
+
 
     if "start focus mode" in command:
         focus.start()
@@ -688,7 +769,9 @@ def handle_command(command):
 
 
 def main():
+    global face_is_present
     active = False
+    last_presence_check = 0.0
     try:
         with sr.Microphone() as source:
             print("Calibrating microphone. Please stay quiet for a moment...")
@@ -700,6 +783,19 @@ def main():
         return
     print(f"Found {len(apps)} Start Menu apps. Say 'hello' to activate, 'sleep' to pause, or 'exit' to quit.")
     while True:
+        now = time.monotonic()
+        if now - last_presence_check >= FACE_PRESENCE_INTERVAL:
+            last_presence_check = now
+            match, message = check_registered_face()
+            if match is True and not face_is_present:
+                face_is_present = True
+                print(f"Jarvis: {message}")
+                speak(message)
+            elif match is False:
+                face_is_present = False
+            elif match is None:
+                print(f"Presence check skipped: {message}")
+
         user = listen()
         if not user:
             continue
