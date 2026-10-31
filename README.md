@@ -4,6 +4,22 @@ SateL is a Windows desktop voice assistant written in Python. It has a small Tki
 
 The app is designed for Windows: it uses Windows speech output, Windows audio controls, Start Menu shortcuts, and Windows paths. The camera features use the included YuNet and SFace OpenCV models.
 
+## Table of Contents
+
+- [Features](#features)
+- [Install from a GitHub release](#install-from-a-github-release)
+- [Configure the Groq API key](#configure-the-groq-api-key)
+- [Voice and text commands](#voice-and-text-commands)
+- [Wake and general conversation](#wake-and-general-conversation)
+- [Reminders](#reminders)
+- [Open websites, apps, and folders](#open-websites-apps-and-folders)
+- [Windows and focus controls](#windows-and-focus-controls)
+- [Camera, screenshot, and battery](#camera-screenshot-and-battery)
+- [Where your data is stored](#where-your-data-is-stored)
+- [Common errors and fixes](#common-errors-and-fixes)
+- [Development notes](#development-notes)
+
+
 ## Features
 
 - **Talk to SateL:** Say “hello,” “SateL,” or “Jarvis” to start voice commands. You can also type commands in the app window. If you register your face, SateL can recognize you when it starts.
@@ -21,11 +37,10 @@ The app is designed for Windows: it uses Windows speech output, Windows audio co
 1. Open the [SateL v1.0.0 release](https://github.com/SatyamInnovates/SateL/releases/tag/v1.0.0).
 2. Under **Assets**, download `SateL-v1.0.0-Windows.zip` to your computer.
 3. Extract the ZIP to a folder you can write to, such as `C:\SateL` or your Documents folder. Keep both extracted folders (`SateL` and `FaceRegister`) together and keep their contents in place.
-4. To enable face recognition, first run `FaceRegister\FaceRegister.exe`. Look at the camera and slowly turn your head as prompted. It closes and saves your face data after collecting eight clear samples.
+4. To enable face recognition, first make sure your room is well lit so your face is recognized better, then run `FaceRegister\FaceRegister.exe`. Look at the camera and slowly turn your head as prompted. It closes and saves your face data after collecting eight clear samples.
 5. Run `SateL\SateL.exe`. If you did not register a face or it cannot recognize you, say **hello**, **SateL**, or **Jarvis** to start voice commands. Windows may show a confirmation the first time you run the app.
 
-
-### Configure the Groq API key
+## Configure the Groq API key
 
 AI answers, AI-assisted app matching, and camera image analysis require a Groq API key. In the same folder as `SateL.exe`, create a text file named `.env` with this line:
 
@@ -41,8 +56,9 @@ Speak clearly and a little louder than usual. If you registered your face, start
 
 For voice, say **hello**, **SateL**, or **Jarvis** to wake SateL. For example, say “Hello what time is it?” When SateL is awake, say the command without the wake word. Say **sleep**, **go to sleep**, or **stop listening** to pause voice commands; say the wake word again to resume. Wake and sleep phrases control voice listening. When typing, enter the command or question directly. Typing works if the microphone is unavailable.
 
+Speech recognition uses the `en-IN` Google recognizer through SpeechRecognition, so it needs an internet connection. Speech output uses Windows SAPI, with Edge TTS as a fallback in the app.
 
-Speech recognition uses the `en-IN` Google recognizer through SpeechRecognition, so it needs an internet connection. Speech output uses Windows SAPI with Edge TTS fallback behavior in the app.
+> **Note:** The AI sometimes creates a large output, so SateL may start speaking a little late.
 
 ### Wake and general conversation
 
@@ -50,7 +66,7 @@ Speech recognition uses the `en-IN` Google recognizer through SpeechRecognition,
 | --- | --- |
 | Say `hello` / `SateL` / `Jarvis` (voice only) | Wake the voice assistant. |
 | Say `hello what time is it?` | Wake the assistant and send the rest as a question. Leave a space after the wake word. |
-| Say `SateL explain photosynthesis` | Same wake-word pattern using SateL's name. |
+| Say `SateL explain ______` | Same wake-word pattern using SateL's name. |
 | Say `sleep` / `go to sleep` / `stop listening` (voice only) | Pause voice command handling until the next wake word. |
 | Say or type `exit` / `quit` / `shutdown` | Stop the assistant. |
 | Say or type `What is a black hole?` | Ask a general question. Requires a valid Groq key and internet. |
@@ -65,12 +81,13 @@ Reminders are relative durations in seconds, minutes, or hours. Numbers can be d
 | `Remind me to call Mom in one hour` | Creates a reminder using the alternate phrasing. |
 | `Set a reminder for 5 minutes` then `take the laundry out` | SateL asks what the reminder is for. Give it the task as your next command within 30 seconds. |
 | `Remind me in 5 minutes` then `take the laundry out` | Another supported way to start the same two-step reminder. |
-| `Show reminders` / `List reminders` / `What are my reminders?` | Reads pending reminders aloud. They also appear in the app window. |
 | `Cancel` | Cancels the pending two-step reminder prompt. |
 
 Due reminders are spoken while SateL is running. Reminder data is saved locally and survives restarts; reminders are not delivered while the app is closed.
 
 ### Open websites, apps, and folders
+
+> **Note:** SateL only opens apps that are in `%APPDATA%\Microsoft\Windows\Start Menu\Programs`.
 
 | Say or type | What it does |
 | --- | --- |
@@ -103,16 +120,7 @@ Edit `websites.json` to add site names and URLs. Edit `folders.json` to add fold
 | `Verify my face` / `Recognize me` | Checks the camera view against the face registered with FaceRegister. |
 | `What do you see?` / `What am I holding?` | Captures a camera image and asks the configured Groq vision model to describe it. Requires a webcam, internet, and a valid Groq key. |
 
-## Project files and local data
-
-- `main.py` — assistant startup, microphone loop, command routing, reminders, camera, audio, and AI API calls.
-- `welcome.py` — Tkinter app window, conversation log, reminder list, and typed command input.
-- `face_register.py`, `check_face.py` — face enrollment and standalone verification tools.
-- `app_paths.py` — source/bundle resource paths and per-user data paths.
-- `models/` — YuNet face detector and SFace face recognizer models required for face features.
-- `websites.json`, `folders.json` — editable website shortcuts and folder nicknames.
-- `requirements.txt` — Python package dependencies.
-- `SateL.spec`, `FaceRegister.spec` — PyInstaller build specifications.
+## Where your data is stored
 
 Mutable files are copied to `%LOCALAPPDATA%\SateL\` on first run (including reminders, conversation history, website/folder configuration, and registered face data). This lets the packaged app write user data without changing its install directory. When you edit the JSON configuration for an existing install, edit the copies in `%LOCALAPPDATA%\SateL\` as well.
 
