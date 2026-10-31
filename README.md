@@ -41,9 +41,14 @@ If the release includes `FaceRegister.exe`, run it from its extracted folder and
 
 
 ## Voice and text commands
+<<<<<<< HEAD
+
+Voice commands are available after the assistant starts listening. Say **hello**, **SateL**, or **Jarvis** to wake it; for example, “Hello what time is it?” When it is awake, say the command without the wake word. Say **sleep**, **go to sleep**, or **stop listening** to pause voice command handling; say the wake word again to resume. You can also type commands directly into the app's command box. Typed commands do not need a wake word and work if microphone setup fails. Wake and sleep phrases control voice listening; for typed questions, enter the question itself.
+=======
 Please talk patently and little loudly
 Imp: if you have registerda your face then wait a little it will scan your face and start SateL if it matches othweise say Hello or type to start it
 Voice commands are available after the assistant starts listening. Say **hello**, **SateL**, or **Jarvis** to wake it; for example, “Hello, what time is it?” When it is awake, say the command without the wake word. Say **sleep** or **stop listening** to pause voice command handling; say the wake word again to resume. You can also type any command directly into the app's command box. Typed commands do not need a wake word and work if microphone setup fails.
+>>>>>>> 38ad9409a197968aa7cfd15b14cd39ebba8ade26
 
 Speech recognition uses the `en-IN` Google recognizer through SpeechRecognition, so it needs an internet connection. Speech output uses Windows SAPI with Edge TTS fallback behavior in the app.
 
@@ -51,16 +56,16 @@ Speech recognition uses the `en-IN` Google recognizer through SpeechRecognition,
 
 | Say or type | What it does |
 | --- | --- |
-| `hello` | Wake the voice assistant. |
-| `hello, how are you?` | Wake and send the rest as a question. |
-| `SateL, explain photosynthesis` | Same wake-word pattern using SateL's name. |
-| `sleep` / `go to sleep` / `stop listening` | Pause voice command handling until the next wake word. |
-| `exit` / `quit` / `shutdown` | Stop the assistant. |
-| `What is a black hole?` | Ask a general question (when awake, or type it). Requires a valid Groq key and internet. |
+| Say `hello` / `SateL` / `Jarvis` (voice only) | Wake the voice assistant. |
+| Say `hello what time is it?` | Wake the assistant and send the rest as a question. Leave a space after the wake word. |
+| Say `SateL explain photosynthesis` | Same wake-word pattern using SateL's name. |
+| Say `sleep` / `go to sleep` / `stop listening` (voice only) | Pause voice command handling until the next wake word. |
+| Say or type `exit` / `quit` / `shutdown` | Stop the assistant. |
+| Say or type `What is a black hole?` | Ask a general question. Requires a valid Groq key and internet. |
 
 ### Reminders
 
-Reminders are relative durations in seconds, minutes, or hours. Numbers can be digits or supported spoken numbers from zero through ninety-nine (for example, `one`, `twenty`, or `twenty one`).
+Reminders are relative durations in seconds, minutes, or hours. Numbers can be digits or supported spoken numbers from one through ninety-nine (for example, `one`, `twenty`, or `twenty one`).
 
 | Say or type | What it does |
 | --- | --- |
