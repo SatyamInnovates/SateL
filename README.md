@@ -6,7 +6,7 @@ The app is designed for Windows: it uses Windows speech output, Windows audio co
 
 ## Features
 
-- **Talk to SateL:** Say “hello,” “SateL,” or “Jarvis” to get started. You can also type to SateL in its window.
+- **Talk to SateL:** Say “hello,” “SateL,” or “Jarvis” to get started. You can also type to SateL in its window. Or if you have runned face_register it would scan your face and start itslef 
 - **Ask questions:** Ask SateL a question and hear its answer. This needs an internet connection and a Groq API key.
 - **Open things quickly:** Ask SateL to open a website, an app on your computer, or one of your saved project folders.
 - **Set reminders:** Ask SateL to remind you about something after a few seconds, minutes, or hours. Your reminders appear in the app window.
