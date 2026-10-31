@@ -41,14 +41,14 @@ If the release includes `FaceRegister.exe`, run it from its extracted folder and
 
 
 ## Voice and text commands
-<<<<<<< HEAD
+
 
 Voice commands are available after the assistant starts listening. Say **hello**, **SateL**, or **Jarvis** to wake it; for example, “Hello what time is it?” When it is awake, say the command without the wake word. Say **sleep**, **go to sleep**, or **stop listening** to pause voice command handling; say the wake word again to resume. You can also type commands directly into the app's command box. Typed commands do not need a wake word and work if microphone setup fails. Wake and sleep phrases control voice listening; for typed questions, enter the question itself.
 =======
 Please talk patently and little loudly
 Imp: if you have registerda your face then wait a little it will scan your face and start SateL if it matches othweise say Hello or type to start it
 Voice commands are available after the assistant starts listening. Say **hello**, **SateL**, or **Jarvis** to wake it; for example, “Hello, what time is it?” When it is awake, say the command without the wake word. Say **sleep** or **stop listening** to pause voice command handling; say the wake word again to resume. You can also type any command directly into the app's command box. Typed commands do not need a wake word and work if microphone setup fails.
->>>>>>> 38ad9409a197968aa7cfd15b14cd39ebba8ade26
+
 
 Speech recognition uses the `en-IN` Google recognizer through SpeechRecognition, so it needs an internet connection. Speech output uses Windows SAPI with Edge TTS fallback behavior in the app.
 
