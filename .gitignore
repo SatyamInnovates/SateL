@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+build/
+dist/
 
 ttsprojecttest1-26be1c6f3488.json
 

@@ -18,6 +18,7 @@ from app_paths import (
     REMINDERS_FILE,
     WEBSITE_FILE,
 )
+
 import requests
 import speech_recognition as sr
 import win32com.client
@@ -32,6 +33,7 @@ import pythoncom
 from datetime import datetime, timedelta
 import base64
 import asyncio,uuid,tempfile
+import ctypes
 import edge_tts
 import pygame
 import cv2
@@ -45,9 +47,16 @@ API_KEY = os.getenv("GROQ_API_KEY")
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "openai/gpt-oss-20b"
 VISION_MODEL = "qwen/qwen3.8-27b"
-SYSTEM_PROMPT = "You are Jarvis, a friendly voice assistant. Give concise, helpful answers."
+SYSTEM_PROMPT = (
+    "You are Jarvis. Be friendly and concise. Use conversation history for context; "
+    "don't claim to remember details that aren't there."
+)
 OPEN_WORDS = {"open", "launch", "start", "run"}
-VOICE = "en-US-RogerNeural"
+VOICE = "en-US-EmmaMultilingualNeural"
+VOICE_RATE = "+15%"
+
+
+
 
 
 pygame.mixer.init()
@@ -60,6 +69,7 @@ last_spoken_at = 0.0
 ui_events = queue.Queue()
 text_commands = queue.Queue()
 assistant_running = threading.Event()
+_single_instance_mutex = None
 
 FACE_MATCH_THRESHOLD = 0.363
 FACE_PRESENCE_INTERVAL = 60
@@ -161,8 +171,10 @@ def parse_reminder_command(command):
     task = r"(?P<text>.+)"
     patterns = (
         rf"remind me in {number} {unit} (?:to )?{task}",
+        rf"remind me {task} in {number} {unit}",
         rf"remind me to {task} in {number} {unit}",
         rf"remind me to {task} after {number} {unit}",
+        rf"(?:set )?(?:a )?reminder (?:me )?(?:in|for|after) {number} {unit} (?:to )?{task}",
         rf"(?:set )?(?:a )?reminder (?:me )?(?:in|for) {number} {unit} to {task}",
         rf"(?:set )?(?:a )?reminder (?:me )?(?:to|for) {task} (?:in|after) {number} {unit}",
     )
@@ -196,7 +208,10 @@ def parse_reminder_delay(command):
     unit = rf"(?P<unit>{REMINDER_UNIT_PATTERN})"
     patterns = (
         rf"remind me in {number} {unit}",
+        rf"remind me after {number} {unit}",
         rf"(?:set )?(?:a )?reminder (?:me )?(?:in|for) {number} {unit}",
+        rf"(?:set )?(?:a )?reminder (?:me )?(?:in|for|after) {number} {unit} (?:from now|later)",
+        rf"(?:set )?(?:a )?reminder (?:me )?(?:for )?{number} {unit}",
     )
     for pattern in patterns:
         match = re.fullmatch(pattern, command)
@@ -266,7 +281,8 @@ def load_conversation():
                 {"role": "assistant", "content": answer},
             ])
 
-    return [messages[0], *messages[-MAX_HISTORY_MESSAGES:]]
+    recent_history = messages[1:][-MAX_HISTORY_MESSAGES:]
+    return [messages[0], *recent_history]
 
 
 conversation_history = load_conversation()
@@ -322,7 +338,7 @@ folders = load_nicknames(FOLDERS_FILE)
 web_url = load_nicknames(WEBSITE_FILE)
 
 async def _make_audio(text, path):
-    await edge_tts.Communicate(text, VOICE,rate="-5%",pitch="-7Hz").save(path)
+    await edge_tts.Communicate(text, VOICE, rate=VOICE_RATE, pitch="-7Hz").save(path)
 
     
     
@@ -363,36 +379,32 @@ def speak(text):
 
 
 def listen():
-    quiet_period = 0.7
+    quiet_period = 0.3
     remaining = quiet_period - (time.monotonic() - last_spoken_at)
     if remaining > 0:
         time.sleep(remaining)
-    asked_to_repeat = False
-    while True:
-        try:
-            with sr.Microphone() as source:
-                print("Listening...")
-                recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                audio = recognizer.listen(source, timeout=8, phrase_time_limit=10)
-                
-            text = recognizer.recognize_google(audio, language="en-IN").lower().strip()
-            print(f"You said: {text}")
-            return text
-        except sr.WaitTimeoutError:
-            return ""
-        except sr.UnknownValueError:
-            print("Couldn't understand that.")
-            if asked_to_repeat:
-                return ""
-            speak("Can you say that again?")
-            asked_to_repeat = True
-        except sr.RequestError as error:
-            print(f"Speech recognition problem: {error}")
-            return ""
-        except (OSError, AttributeError) as error:
-            print(f"Microphone problem: {error}")
-            speak(f"Microphone problem: {error}")
-            return ""
+    try:
+        with sr.Microphone() as source:
+            print("Listening...")
+            audio = recognizer.listen(source, timeout=3, phrase_time_limit=7)
+
+        text = recognizer.recognize_google(audio, language="en-IN").lower().strip()
+        print(f"You said: {text}")
+        return text
+    except sr.WaitTimeoutError:
+        # Silence is normal; return to the main loop without speaking.
+        return ""
+    except sr.UnknownValueError:
+        # Avoid repeatedly prompting when background noise cannot be understood.
+        print("Speech was unclear; waiting for the next command.")
+        return ""
+    except sr.RequestError as error:
+        print(f"Speech recognition problem: {error}")
+        return ""
+    except (OSError, AttributeError) as error:
+        print(f"Microphone problem: {error}")
+        speak(f"Microphone problem: {error}")
+        return ""
         
         
         
@@ -432,8 +444,10 @@ def vision(question):
                 {
                     "role": "system",
                     "content": (
-                        "You are Jarvis. Answer questions about the camera image "
-                        "concisely. Describe only what is visible and say when unsure."
+                        "You are Jarvis. Answer the user's camera question in one short "
+                        "sentence, ideally under 15 words. For questions about hands, "
+                        "inspect the visible hand area and name any clearly visible object. "
+                        "Describe only what is visible and say when unsure."
                     ),
                 },
                 {
@@ -443,7 +457,7 @@ def vision(question):
                         "url": f"data:image/jpeg;base64,{image_base64}"},},],},
                 ],
             "temperature": 0.4,
-            "max_completion_tokens": 400,
+            "max_completion_tokens": 96,
         }
         response = requests.post(
             API_URL,
@@ -485,13 +499,14 @@ def check_registered_face():
         camera.release()
 
     try:
-        saved_feature = np.load(FACE_EMBEDDING_FILE, allow_pickle=False)
-        if saved_feature.size == 0 or not np.isfinite(saved_feature).all():
+        saved_features = np.load(FACE_EMBEDDING_FILE, allow_pickle=False)
+        if saved_features.size == 0 or not np.isfinite(saved_features).all():
             return None, "The saved face data is invalid. Register your face again."
+        saved_features = saved_features.reshape(-1, saved_features.shape[-1])
 
         h, w = frame.shape[:2]
         detector = cv2.FaceDetectorYN.create(
-            str(FACE_DETECTOR_MODEL), "", (w, h), score_threshold=0.5
+            str(FACE_DETECTOR_MODEL), "", (w, h), score_threshold=0.4
         )
         recognizer = cv2.FaceRecognizerSF.create(str(FACE_RECOGNIZER_MODEL), "")
         detector.setInputSize((w, h))
@@ -503,11 +518,15 @@ def check_registered_face():
 
         aligned = recognizer.alignCrop(frame, faces[0])
         current_feature = recognizer.feature(aligned)
-        score = float(recognizer.match(
-            saved_feature,
-            current_feature,
-            cv2.FaceRecognizerSF_FR_COSINE,
-        ))
+        scores = [
+            float(recognizer.match(
+                saved_feature.reshape(1, -1),
+                current_feature,
+                cv2.FaceRecognizerSF_FR_COSINE,
+            ))
+            for saved_feature in saved_features
+        ]
+        score = max(scores)
         print(f"Face similarity: {score:.3f}")
         if score >= FACE_MATCH_THRESHOLD:
             return True, "User has arrived."
@@ -822,6 +841,38 @@ def is_app_command(text):
     return bool(words and words[0] in OPEN_WORDS) or text.lower().strip() in apps
 
 
+def is_face_verification_command(text):
+    text = re.sub(r"[^a-z0-9 ]+", " ", text.lower())
+    text = " ".join(text.split())
+    phrases = (
+        "verify face",
+        "verify my face",
+        "check my face",
+        "check face",
+        "recognize me",
+        "check if it is me",
+        "check if this is me",
+        "is it me",
+    )
+    return any(phrase in text for phrase in phrases)
+
+
+def is_vision_command(text):
+    text = text.lower().replace("'", "")
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    text = " ".join(text.split())
+    phrases = (
+        "what do you see", "what can you see", "describe what you see",
+        "look at this", "what is in front of me", "whats in front of me",
+        "what is near me", "whats near me", "analyze camera",
+        "what is on my hand", "what is on my hands", "whats on my hand",
+        "whats on my hands", "what is in my hand", "what is in my hands",
+        "whats in my hand", "whats in my hands", "what am i holding",
+        "what do i have in my hand", "what do i have in my hands",
+    )
+    return any(phrase in text for phrase in phrases)
+
+
 def handle_command(command):
     global pending_reminder
     query = " ".join(filter_user(command))
@@ -859,8 +910,8 @@ def handle_command(command):
             return
         pending_reminder = None
 
-    if "remind me" in command or "set reminder" in command:
-        speak("Say, remind me in 5 minutes, then tell me what to remind you about.")
+    if "remind" in command or "reminder" in command:
+        speak("I can set that. Say a time like 'in 5 minutes', then tell me what to remind you about.")
         return
 
     if command in {"list reminders", "what are my reminders", "show reminders"}:
@@ -874,24 +925,13 @@ def handle_command(command):
             speak("Your reminders are: " + ". ".join(descriptions))
         return
 
-    vision_phrases = (
-        "what do you see",
-        "what can you see",
-        "describe what you see",
-        "look at this",
-        "what is in front of me",
-        "what's in front of me",
-        "analyze camera",
-        "what's near me",
-    )
-    
-    if any(phrase in command for phrase in vision_phrases):
+    if is_vision_command(command):
         answer = vision(command)
         print(f"Jarvis: {answer}")
         speak(answer)
         return
 
-    if command in {"verify face", "verify my face", "check my face", "recognize me"}:
+    if is_face_verification_command(command):
         match, answer = check_registered_face()
         if match is True:
             ui_events.put(("arrival", answer))
@@ -1047,10 +1087,13 @@ def main():
             match, message = check_registered_face()
             if match is True and not face_arrival_announced:
                 face_arrival_announced = True
+                active = True
                 ui_events.put(("arrival", message))
                 print(f"Jarvis: {message}")
                 speak(message)
             elif match is False:
+                face_arrival_announced = False
+                active = False
                 ui_events.put(("face_status", "Not detected"))
             elif match is None:
                 ui_events.put(("face_status", "Unavailable"))
@@ -1087,12 +1130,23 @@ def main():
             break
 
         if not active:
-            if "hello" not in words and "jarvis" not in words and "satel" not in words:
+            face_request = is_face_verification_command(user)
+            vision_request = is_vision_command(user)
+            if (
+                "hello" not in words
+                and "jarvis" not in words
+                and "satel" not in words
+                and not face_request
+                and not vision_request
+            ):
                 continue
             active = True
-            print("Assistant activated!")
-            speak("Yea! What's up bro?")
-            command = " ".join(w for w in words if w not in {"hello", "jarvis", "satel"}).strip()
+            command = " ".join(
+                w for w in words if w not in {"hello", "jarvis", "satel"}
+            ).strip()
+            if not face_request and not vision_request:
+                print("Assistant activated!")
+                speak("Yea! What's up bro?")
             if not command:
                 continue
         else:
@@ -1122,6 +1176,21 @@ def assistant_worker():
 
 
 def start_app():
+    global _single_instance_mutex
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p)
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    ctypes.set_last_error(0)
+    _single_instance_mutex = kernel32.CreateMutexW(
+        None, False, "Local\\SateL_Assistant"
+    )
+    last_error = ctypes.get_last_error()
+    if not _single_instance_mutex:
+        raise OSError(last_error, "Could not create the SateL instance lock.")
+    if last_error == 183:  # ERROR_ALREADY_EXISTS
+        print("SateL is already running.")
+        return
+
     from welcome import WelcomeWindow
 
     root = tk.Tk()
@@ -1139,6 +1208,8 @@ def start_app():
                     window.set_greeting(value)
                 elif event == "face_status":
                     window.set_face_status(value)
+                    if value == "Not detected":
+                        window.set_greeting("User has not arrived.")
                 elif event == "focus":
                     window.set_focus_status(value)
                 elif event == "reminders":
