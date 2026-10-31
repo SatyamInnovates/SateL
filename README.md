@@ -6,27 +6,41 @@ The app is designed for Windows: it uses Windows speech output, Windows audio co
 
 ## Features
 
-- Wake by saying **hello**, **SateL**, or **Jarvis**. Face recognition can also activate the assistant when a registered face is seen.
-- Type commands into the app window if you do not have a working microphone.
-- Ask general questions using the Groq chat API.
-- Open configured websites, installed Start Menu apps, and configured project folders in VS Code.
-- Set, view, and receive timed reminders.
-- Control Windows master volume and mute state.
-- Start a 45-minute focus session that sets volume to 25%, opens the current project in VS Code, and opens Spotify. Stop it early to restore the previous audio settings.
-- Take a screenshot, check battery percentage, verify a face, or ask a question about the camera view.
+- **Talk to SateL:** Say “hello,” “SateL,” or “Jarvis” to get started. You can also type to SateL in its window.
+- **Ask questions:** Ask SateL a question and hear its answer. This needs an internet connection and a Groq API key.
+- **Open things quickly:** Ask SateL to open a website, an app on your computer, or one of your saved project folders.
+- **Set reminders:** Ask SateL to remind you about something after a few seconds, minutes, or hours. Your reminders appear in the app window.
+- **Control sound:** Turn the volume up or down, set a volume level, or mute and unmute your computer.
+- **Focus with music:** Start a 45-minute focus session. SateL opens your project and Spotify, lowers the volume, and restores your previous sound settings when the session ends.
+- **Use your camera:** Register your face to let SateL recognize you, or ask what it sees. Camera questions need an internet connection and a Groq API key.
+- **Quick checks:** Ask for your battery level or take a screenshot of your screen.
 
-## Requirements
+## Install from a GitHub release
 
-- Windows 10 or 11
-- Python 3.10 or newer (64-bit recommended)
-- A microphone for voice commands, and a webcam for face and camera features
-- Internet access for speech recognition, Groq AI, and opening web services
-- A Groq API key for AI questions, AI-assisted app matching, and camera image analysis
-- VS Code installed and available as `code` on `PATH` to open project folders or use focus mode as configured
+1. Open the [SateL Releases page](https://github.com/SatyamInnovates/SateL/releases).
+2. Choose the release tag/version you want and download its Windows packaged asset from **Assets**. Download the full SateL archive, not GitHub's automatic **Source code** archives; those contain source files and are for developers.
+3. Extract the downloaded archive to a folder you can write to, such as `Downloads\SateL` or `Documents\SateL`. Keep the extracted folder structure intact; the packaged build includes supporting files and the face models.
+4. Run `SateL.exe` from the extracted folder. Windows may ask you to confirm that you want to run an app downloaded from the internet.
 
-## Install and run from source
+Python is not required when using the packaged release. The app is built as a folder-based PyInstaller application, so do not move `SateL.exe` out of its extracted folder. A microphone is needed for voice commands, and a webcam is needed for face and camera features. Internet access is needed for online speech recognition, AI features, and web pages.
 
-Open PowerShell in the project folder (`C:\SateL` in this checkout), then create and activate a virtual environment:
+### Configure the Groq API key (optional)
+
+AI answers, AI-assisted app matching, and camera image analysis require a Groq API key. In the same folder as `SateL.exe`, create a text file named `.env` with this line:
+
+```text
+GROQ_API_KEY=your_groq_api_key
+```
+
+Save it as `.env` (not `.env.txt`), then restart SateL. Keep the key private and do not upload it to GitHub. Local commands such as reminders, volume control, screenshots, and configured website opening work without a key.
+
+### Register your face from a release (optional)
+
+If the release includes `FaceRegister.exe`, run it from its extracted folder and follow the camera window prompts. Keep only one person in frame, face the camera, use clear lighting, and turn your head slightly as prompted. Registration collects eight clear samples; press **Esc** to cancel. The saved face embedding is stored in `%LOCALAPPDATA%\SateL\face.npy`.
+
+## Run from source (developers)
+
+Source setup requires Windows 10 or 11 and Python 3.10 or newer (64-bit recommended). Open PowerShell in the project folder, then create and activate a virtual environment:
 
 ```powershell
 py -3 -m venv .venv
@@ -56,11 +70,11 @@ Start the assistant:
 python main.py
 ```
 
-The Tkinter window opens and the assistant tries to initialize the microphone. To exit, type `exit` in the command box or close the window. The assistant may also be started as a packaged application from a PyInstaller build; the checked-in spec files are `SateL.spec` and `FaceRegister.spec`.
+The Tkinter window opens and the assistant tries to initialize the microphone. To exit, type `exit` in the command box or close the window. The checked-in PyInstaller specs (`SateL.spec` and `FaceRegister.spec`) define folder-based packaged builds.
 
 ## Register your face (optional)
 
-Face registration stores face embeddings locally, not camera images. With the webcam available, run:
+For a source installation, face registration stores face embeddings locally, not camera images. With the webcam available, run:
 
 ```powershell
 python face_register.py
